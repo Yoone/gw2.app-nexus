@@ -1,0 +1,11 @@
+# Build output
+build/
+
+# Vim
+*.swp
+*.swo
+*.swn
+*.swm
+
+# Mac
+.DS_Store

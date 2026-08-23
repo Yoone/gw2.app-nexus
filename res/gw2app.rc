@@ -1,0 +1,6 @@
+#include "resource.h"
+
+/* Custom resource type "PNG", required by Nexus' texture loader. */
+IDB_GW2APP_ICON        PNG "gw2app-icon.png"
+IDB_GW2APP_LOGO        PNG "gw2app-logo.png"
+IDB_GW2APP_ICON_HIDDEN PNG "gw2app-icon-lists-hidden.png"
