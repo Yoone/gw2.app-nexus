@@ -141,8 +141,8 @@ release:
 	@git ls-remote --exit-code --tags origin "refs/tags/$(TAG)" >/dev/null 2>&1 \
 		&& { echo "FAIL tag $(TAG) already exists on origin. Bump AddonDef.Version in $(VERSION_FILE)."; exit 1; } \
 		|| true
-	@test -z "$$(git status --porcelain)" \
-		|| { echo "FAIL uncommitted changes. The tag would point at code you have not committed."; exit 1; }
+	@test -z "$$(git status --porcelain -uno)" \
+		|| { echo "FAIL tracked files have uncommitted changes; the tag would not include them."; exit 1; }
 	git tag $(TAG)
 	git push origin $(TAG)
 	@echo "pushed $(TAG)"
