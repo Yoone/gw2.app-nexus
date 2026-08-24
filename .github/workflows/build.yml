@@ -1,0 +1,37 @@
+name: build
+
+# Nexus is built with MSVC and we share its ImGui context, so releases use MSVC too.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: gw2app-dll
+          path: build/Release/gw2app.dll
+          if-no-files-found: error

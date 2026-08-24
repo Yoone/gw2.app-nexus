@@ -9,9 +9,18 @@ ADDONS_DIR = $(GW2_DIR)/addons
 NEXUS_LOG  = $(ADDONS_DIR)/Nexus/Nexus.log
 
 # Cross-compiler: we build a Windows x64 DLL from macOS.
-# See docs/development.md for why this is a test-only artifact and CI builds the shippable one.
 CXX     = x86_64-w64-mingw32-g++
 WINDRES = x86_64-w64-mingw32-windres
+
+# Nexus compares the release tag against AddonDef.Version, so the tag is derived from the
+# code rather than typed by hand.
+VERSION_FILE = src/entry.cpp
+VERSION = $(shell awk -F'= *' \
+	'/AddonDef\.Version\.Major/{a=$$2} /AddonDef\.Version\.Minor/{b=$$2} \
+	 /AddonDef\.Version\.Build/{c=$$2} /AddonDef\.Version\.Revision/{d=$$2} \
+	 END{gsub(/[^0-9]/,"",a);gsub(/[^0-9]/,"",b);gsub(/[^0-9]/,"",c);gsub(/[^0-9]/,"",d); \
+	     print a"."b"."c"."d}' $(VERSION_FILE))
+TAG = v$(VERSION)
 
 SRCS = $(wildcard src/*.cpp) \
        $(wildcard src/UI/*.cpp) \
@@ -116,3 +125,24 @@ dev: deploy run
 .PHONY: clean
 clean:
 	rm -rf $(BUILD)
+
+.PHONY: version
+version:
+	@echo $(TAG)
+
+# Pushing the tag is what starts the release build.
+.PHONY: release
+release:
+	@test -n "$(VERSION)" \
+		|| { echo "FAIL could not read AddonDef.Version from $(VERSION_FILE)"; exit 1; }
+	@git rev-parse --verify --quiet "refs/tags/$(TAG)" >/dev/null \
+		&& { echo "FAIL tag $(TAG) already exists locally. Bump AddonDef.Version in $(VERSION_FILE)."; exit 1; } \
+		|| true
+	@git ls-remote --exit-code --tags origin "refs/tags/$(TAG)" >/dev/null 2>&1 \
+		&& { echo "FAIL tag $(TAG) already exists on origin. Bump AddonDef.Version in $(VERSION_FILE)."; exit 1; } \
+		|| true
+	@test -z "$$(git status --porcelain)" \
+		|| { echo "FAIL uncommitted changes. The tag would point at code you have not committed."; exit 1; }
+	git tag $(TAG)
+	git push origin $(TAG)
+	@echo "pushed $(TAG)"

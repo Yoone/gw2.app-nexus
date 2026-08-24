@@ -20,6 +20,17 @@ make dev         # build, deploy into the GW2 prefix, launch the game
 make logs        # tail Nexus.log
 ```
 
-Also available: `build`, `deploy`, `undeploy`, `run`, `log`, `clean`.
+Also available: `build`, `deploy`, `undeploy`, `run`, `log`, `clean`, `version`, `release`.
 
 The module can be dynamically re-loaded by Nexus using the UI in game (after a `make deploy`).
+
+## Builds
+
+The Makefile builds locally on macOS with MinGW. Releases use the MSVC build in
+`CMakeLists.txt`, which `.github/workflows/build.yml` runs on a Windows runner.
+
+### Release workflow
+
+1. Bump the version in `src/entry.cpp` (`AddonDef.Version`)
+1. Commit & push
+1. Run `make release` (reads version in code and pushes as tag, triggering the release workflow)
