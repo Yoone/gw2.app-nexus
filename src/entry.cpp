@@ -44,14 +44,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID /*lpRese
 
 extern "C" __declspec(dllexport) AddonDefinition_t* GetAddonDef()
 {
-    /* Negative signature = not hosted on Raidcore. Swap for the assigned positive id if we
-       ever publish through Nexus' library. */
-    AddonDef.Signature = (uint32_t)-1645843523;
+    AddonDef.Signature = 0x473241; // ASCII: G 2 A -> 0x47 0x32 0x41 = 4665921
     AddonDef.APIVersion = NEXUS_API_VERSION;
 
     AddonDef.Name = "GW2.app";
     AddonDef.Version.Major = 0;
-    AddonDef.Version.Minor = 2;
+    AddonDef.Version.Minor = 3;
     AddonDef.Version.Build = 0;
     AddonDef.Version.Revision = 0;
     AddonDef.Author = "Yoone";
