@@ -34,7 +34,6 @@ namespace
     std::string s_shortcutTooltip;
 
     /* Brand colours, from the website's tokens. */
-    constexpr ImU32 COL_BRAND        = IM_COL32(0xff, 0x7b, 0xc6, 0xff);
     constexpr ImU32 COL_BRAND_HOVER  = IM_COL32(0xff, 0x9a, 0xd5, 0xff);
     constexpr ImU32 COL_BRAND_ACTIVE = IM_COL32(0xe0, 0x62, 0xab, 0xff);
     constexpr ImU32 COL_BRAND_TEXT   = IM_COL32(0x14, 0x04, 0x0d, 0xff);
@@ -417,7 +416,7 @@ namespace
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - button.x) * 0.5f);
             }
 
-            ImGui::PushStyleColor(ImGuiCol_Button,        COL_BRAND);
+            ImGui::PushStyleColor(ImGuiCol_Button,        UI::COL_BRAND);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_BRAND_HOVER);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_BRAND_ACTIVE);
             ImGui::PushStyleColor(ImGuiCol_Text,          COL_BRAND_TEXT);

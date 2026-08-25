@@ -1,5 +1,7 @@
 # GW2.app Nexus Module
 
+![GW2.app lists open in game using Nexus](assets/screenshot.webp)
+
 Access your [GW2.app](https://gw2.app) lists in game, as a
 [Nexus](https://raidcore.gg/gw2/nexus) addon.
 

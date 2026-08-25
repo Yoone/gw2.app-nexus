@@ -21,6 +21,9 @@ namespace UI
     ImU32 AccentFor(const std::string& aColorName);
     ImU32 HeaderTextOn(ImU32 aAccent);   /* readable title colour over that accent */
 
+    /* The website's primary colour. */
+    constexpr ImU32 COL_BRAND = IM_COL32(0xff, 0x7b, 0xc6, 0xff);
+
     /* The window styling shared by every GW2.app window. Always pair them. */
     void PushWindowStyle(ImU32 aAccent);
     void PopWindowStyle();

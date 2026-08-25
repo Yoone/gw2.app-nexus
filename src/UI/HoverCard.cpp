@@ -378,7 +378,7 @@ namespace UI::HoverCard
 
             ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-            /* Track, then a brand-pink arc sweeping once every ~1.6 s. */
+            /* Track, then an arc in the primary colour sweeping once every ~1.6 s. */
             const float twoPi = 6.28318530718f;
             dl->PathArcTo(centre, radius, 0.0f, twoPi, 32);
             dl->PathStroke(IM_COL32(255, 255, 255, 40), false, thickness);

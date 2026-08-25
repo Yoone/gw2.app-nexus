@@ -34,7 +34,7 @@ namespace
     /// Only the numbers that describe content are scaled; hairlines stay at 1 px.
     ///------------------------------------------------------------------------------------------------
     constexpr float BASE_CHECKBOX        = 22.0f;
-    constexpr float BASE_CHECKBOX_LEFT   = 8.0f;    /* content edge -> checkbox */
+    constexpr float BASE_CHECKBOX_LEFT   = 12.0f;   /* content edge -> checkbox */
     /* Timers have an opaque background, so without this gap the row image looks welded to the
        checkbox. The column is derived from its three parts so they stay in step. */
     constexpr float BASE_CHECKBOX_GAP    = 8.0f;    /* checkbox -> row image */
@@ -45,6 +45,10 @@ namespace
     /* List windows run with zero WindowPadding so the rows sit flush against the frame, which
        leaves the footer to carry its own padding. */
     constexpr float BASE_FOOTER_PAD      = 8.0f;
+    constexpr float BASE_RESET_GAP       = 4.0f;    /* clock to countdown text */
+    /* Digits have no descenders, so their ink sits above the middle of the text box and a
+       geometrically centred clock reads high. Nudge it down to match by eye. */
+    constexpr float BASE_RESET_GLYPH_NUDGE = 1.0f;
     constexpr float BASE_ROWS_BOTTOM     = 10.0f;   /* below the last row */
     constexpr float BASE_SECTION_GAP     = 6.0f;    /* above and below the completed toggle */
     /* Blish's 64 px spinner was a texture whose art carried its own padding, so the visible circle
@@ -70,6 +74,7 @@ namespace
     constexpr ImU32 COL_MUTED   = IM_COL32(0xD3, 0xD3, 0xD3, 0xFF);
     constexpr ImU32 COL_ERROR   = IM_COL32(0xF2, 0x55, 0x5A, 0xFF);
     constexpr ImU32 COL_SPINNER = IM_COL32(0xE6, 0xE8, 0xEC, 0xFF);
+    constexpr ImU32 COL_CHECK_DONE = IM_COL32(0x8A, 0x8F, 0x98, 0xFF);
 
     /* Multiplied onto the row image as a vertex colour while a toggle is in flight. Tinting stays
        a draw-command colour, so the shared texture is never rewritten. */
@@ -154,7 +159,6 @@ namespace
         aDrawList->PathStroke(aColor, false, aThickness);
     }
 
-    /* The clock next to the reset countdown. The caller sizes it off the header's line height. */
     void DrawResetGlyph(ImDrawList* aDrawList, ImVec2 aCenter, float aRadius, ImU32 aColor)
     {
         if (aDrawList == nullptr || aRadius <= 2.0f) { return; }
@@ -165,6 +169,40 @@ namespace
         aDrawList->AddLine(aCenter, ImVec2(aCenter.x + aRadius * 0.45f, aCenter.y), aColor, th);
     }
 
+    float ResetGlyphRadius()
+    {
+        return std::round(ImGui::GetFontSize() * 0.36f);
+    }
+
+    /* Clock, gap, then the text. Both the title budget and the painter need this. */
+    float ResetBlockWidth(const std::string& aText, float aScale)
+    {
+        if (aText.empty()) { return 0.0f; }
+        return ResetGlyphRadius() * 2.0f
+             + std::round(BASE_RESET_GAP * aScale)
+             + ImGui::CalcTextSize(aText.c_str()).x;
+    }
+
+    std::string TruncateToWidth(const std::string& aText, float aMaxWidth)
+    {
+        if (aText.empty() || aMaxWidth <= 0.0f) { return std::string(); }
+        if (ImGui::CalcTextSize(aText.c_str()).x <= aMaxWidth) { return aText; }
+
+        const char* tail = "...";
+        const float tailW = ImGui::CalcTextSize(tail).x;
+
+        size_t fit = 0;
+        for (size_t i = 1; i <= aText.size(); ++i)
+        {
+            /* Never cut a UTF-8 sequence in half. */
+            if (i < aText.size() && ((unsigned char)aText[i] & 0xC0) == 0x80) { continue; }
+            if (ImGui::CalcTextSize(aText.substr(0, i).c_str()).x + tailW > aMaxWidth) { break; }
+            fit = i;
+        }
+
+        if (fit == 0) { return std::string(); }
+        return aText.substr(0, fit) + tail;
+    }
 
     bool IsWindowResizeActive(ImGuiWindow* aWindow)
     {
@@ -291,7 +329,24 @@ namespace
             }
 
             bool checked = entry.Completed || autoDone;
-            if (ImGui::Checkbox("##done", &checked) && !locked)
+
+            /* The shared theme draws no frame border, which leaves an unticked box nearly
+               invisible against a row image. The primary colour while there is something to do,
+               grey once it is done. */
+            const ImU32 boxInk     = checked ? COL_CHECK_DONE : UI::COL_BRAND;
+            const ImU32 boxBorder  = (boxInk & ~IM_COL32_A_MASK)
+                                   | ((ImU32)(0.70f * 255.0f) << IM_COL32_A_SHIFT);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, std::max(1.0f, std::round(aCtx.Scale)));
+            ImGui::PushStyleColor(ImGuiCol_Border,    boxBorder);
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, boxInk);
+
+            const bool toggled = ImGui::Checkbox("##done", &checked);
+
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar();
+
+            if (toggled && !locked)
             {
                 /* The protocol forbids completing a loot bag row or an auto-completed one, so
                    the send path is guarded here as well as in the drawing above. The website
@@ -545,64 +600,6 @@ namespace
     }
 
     ///------------------------------------------------------------------------------------------------
-    /// Header strip: the reset countdown, on its own row under the title.
-    ///
-    /// Painted in the title bar's own colour so it reads as one coloured header block carrying the
-    /// list's identity. The account name belongs to the window title, not to this strip.
-    ///------------------------------------------------------------------------------------------------
-    float RenderHeaderStrip(const Protocol::List& aList, ImU32 aAccent, float aScale)
-    {
-        const std::string reset = Countdown::For(aList.Reset);
-
-        if (reset.empty()) { return 0.0f; }
-
-        const ImVec2      winPos  = ImGui::GetWindowPos();
-        const float       winW    = ImGui::GetWindowSize().x;
-        const ImVec2      cursor  = ImGui::GetCursorScreenPos();
-
-        const float lineH = ImGui::GetTextLineHeight();
-        const float padY  = std::round(4.0f * aScale);
-        const float padX  = std::round(8.0f * aScale);
-        const float stripH = lineH + padY * 2.0f;
-
-        /* The window's own padding, not style.WindowPadding: list windows push zero padding around
-           Begin and pop it immediately, so the style has already reverted by the time we get here. */
-        const float winPadY = ImGui::GetCurrentWindow()->WindowPadding.y;
-        const float top     = std::round(cursor.y - winPadY);
-
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImU32 fill     = ImGui::GetColorU32(ImGui::IsWindowFocused()
-                                   ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
-
-        drawList->AddRectFilled(ImVec2(winPos.x + 1.0f, top),
-                                ImVec2(winPos.x + winW - 1.0f, top + stripH), fill);
-        drawList->AddLine(ImVec2(winPos.x + 1.0f, std::floor(top + stripH) + 0.5f),
-                          ImVec2(winPos.x + winW - 1.0f, std::floor(top + stripH) + 0.5f),
-                          IM_COL32(0, 0, 0, 60), 1.0f);
-
-        const ImU32 ink   = UI::HeaderTextOn(aAccent);
-        const float textY = top + padY;
-
-        const float glyphR = std::round(lineH * 0.38f);
-        const float gap    = std::round(4.0f * aScale);
-        const float textW  = ImGui::CalcTextSize(reset.c_str()).x;
-
-        /* Right-aligned as one block, so the glyph and the text never separate. */
-        const float blockW = glyphR * 2.0f + gap + textW;
-        const float blockX = winPos.x + winW - padX - blockW;
-
-        DrawResetGlyph(drawList, ImVec2(blockX + glyphR, top + stripH * 0.5f), glyphR, ink);
-        TextAt(ImVec2(blockX + glyphR * 2.0f + gap, textY), ink, reset.c_str());
-
-        const float next = top + stripH + std::round(6.0f * aScale);
-        ImGui::SetCursorScreenPos(ImVec2(cursor.x, next));
-
-        /* The strip is painted over the window's top padding so it sits flush against the title
-           bar, which is why it consumes that much less of the content flow. */
-        return std::max(0.0f, next - cursor.y);
-    }
-
-    ///------------------------------------------------------------------------------------------------
     /// One list window
     ///------------------------------------------------------------------------------------------------
     void RenderList(const Protocol::List& aList, HoverReq& aHover)
@@ -622,13 +619,16 @@ namespace
         /* The account name goes in the title as "List name (Account.1234)": it qualifies which
            list this is, so it belongs with the name. WindowLabel's "###" form keeps the geometry
            stable even though the visible text changes. */
-        std::string display = aList.Name.empty() ? listId : aList.Name;
+        const std::string listName = aList.Name.empty() ? listId : aList.Name;
+
+        std::string account;
         if (Settings::ShowAccountName() && !aList.AccountName.empty())
         {
-            display += " (" + aList.AccountName + ")";
+            account = " (" + aList.AccountName + ")";
         }
 
-        const std::string label = UI::WindowLabel(display, listId);
+        const std::string reset   = Countdown::For(aList.Reset);
+        const std::string stableId = "###GW2APP_" + listId;
 
         /* --- geometry --------------------------------------------------------------------- */
         const float imageW      = RowImageWidth(scale);
@@ -641,6 +641,27 @@ namespace
            There is no WindowPadding term because the scrolling area sits flush to the edges. */
         const float windowW = std::round(checkboxCol + imageW + style.ScrollbarSize
                                          + 2.0f * scale);
+
+        /* ImGui clips the title to the whole bar, so a long name would run under the countdown we
+           paint on the right. Budget for the collapse arrow, the close button and the countdown,
+           then shorten the title ourselves. */
+        const float buttonW    = ImGui::GetFontSize() + style.FramePadding.x * 2.0f;
+        const float countdownW = reset.empty()
+            ? 0.0f
+            : ResetBlockWidth(reset, scale) + style.ItemSpacing.x;
+        const float titleAvail = windowW - buttonW * 2.0f - countdownW - style.FramePadding.x;
+
+        /* Shorten the list name, not the account name: which account a list belongs to is the
+           part that disambiguates two lists with the same name. */
+        const float accountW = account.empty() ? 0.0f : ImGui::CalcTextSize(account.c_str()).x;
+
+        std::string title = TruncateToWidth(listName, titleAvail - accountW) + account;
+        if (ImGui::CalcTextSize(title.c_str()).x > titleAvail)
+        {
+            title = TruncateToWidth(listName + account, titleAvail);
+        }
+
+        const std::string label = UI::WindowLabel(title, listId);
 
         const float chromeH = ImGui::GetFrameHeight();
         const float baseH   = std::round(BASE_WINDOW_BASE_H * scale);
@@ -663,7 +684,7 @@ namespace
            "###", so this is the id ImGui derives from the label whatever the display name is. */
         if (state.Fresh)
         {
-            if (ImGuiWindowSettings* ws = ImGui::FindWindowSettings(ImHashStr(label.c_str())))
+            if (ImGuiWindowSettings* ws = ImGui::FindWindowSettings(ImHashStr(stableId.c_str())))
             {
                 if (ws->Size.y > 0)
                 {
@@ -780,6 +801,40 @@ namespace
             state.ActualHeight = ImGui::GetWindowSize().y;
 
             ImGuiWindow* window = ImGui::GetCurrentWindow();
+
+            /* ImGui title bars are left-aligned text and nothing else, so the countdown is
+               painted straight onto the bar. The window's clip rect covers the content area
+               only, hence the temporary one. */
+            if (!reset.empty())
+            {
+                const ImGuiStyle& st       = ImGui::GetStyle();
+                const float       titleH   = ImGui::GetFrameHeight();
+                const float       closeW   = ImGui::GetFontSize() + st.FramePadding.x * 2.0f;
+                const ImVec2      textSize = ImGui::CalcTextSize(reset.c_str());
+                const ImVec2      winSize  = ImGui::GetWindowSize();
+
+                const ImVec2 barMin(window->Pos.x, window->Pos.y);
+                const ImVec2 barMax(window->Pos.x + winSize.x, window->Pos.y + titleH);
+
+                const float glyphR = ResetGlyphRadius();
+                const float gap    = std::round(BASE_RESET_GAP * scale);
+                const float blockW = ResetBlockWidth(reset, scale);
+                const float blockX = barMax.x - closeW - st.FramePadding.x - blockW;
+                const float y      = barMin.y + (titleH - textSize.y) * 0.5f;
+
+                const ImU32 ink = UI::HeaderTextOn(accent);
+
+                const float glyphY = std::round(y + textSize.y * 0.5f
+                                                + BASE_RESET_GLYPH_NUDGE * scale);
+
+                window->DrawList->PushClipRect(barMin, barMax, false);
+                DrawResetGlyph(window->DrawList,
+                               ImVec2(std::round(blockX + glyphR), glyphY), glyphR, ink);
+                window->DrawList->AddText(ImVec2(std::floor(blockX + glyphR * 2.0f + gap),
+                                                 std::floor(y)), ink, reset.c_str());
+                window->DrawList->PopClipRect();
+            }
+
             state.Resizing = !fixedFit && IsWindowResizeActive(window);
             if (state.Resizing)
             {
@@ -800,7 +855,6 @@ namespace
             const ImVec2 winMax = ImVec2(winMin.x + ImGui::GetWindowSize().x,
                                          winMin.y + ImGui::GetWindowSize().y);
 
-            const float headerH = RenderHeaderStrip(aList, accent, scale);
             const float contentW = ImGui::GetContentRegionAvail().x;
             const ImVec2 bodyTop = ImGui::GetCursorScreenPos();
 
@@ -939,7 +993,7 @@ namespace
                 bodyH += footerH;
             }
 
-            state.NeededHeight = chromeH + headerH + bodyH;
+            state.NeededHeight = chromeH + bodyH;
         }
 
         ImGui::End();
