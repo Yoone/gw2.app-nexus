@@ -51,7 +51,7 @@ extern "C" __declspec(dllexport) AddonDefinition_t* GetAddonDef()
 
     AddonDef.Name = "GW2.app";
     AddonDef.Version.Major = 0;
-    AddonDef.Version.Minor = 1;
+    AddonDef.Version.Minor = 2;
     AddonDef.Version.Build = 0;
     AddonDef.Version.Revision = 0;
     AddonDef.Author = "Yoone";
