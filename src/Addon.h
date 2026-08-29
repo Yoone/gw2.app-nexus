@@ -17,11 +17,12 @@ extern NexusLinkData_t* NexusLink;
 namespace Addon
 {
     constexpr const char* NAME             = "GW2.app";
-    constexpr uint16_t    PORT             = 38473;
+    /* One above the Blish module's 38473, so both can run at the same time. */
+    constexpr uint16_t    PORT             = 38474;
     constexpr int         PROTOCOL_VERSION = 2;   /* we accept clients 1..2 */
 
-    /* Sent to the website on `subscribe`. The Blish module binds the same port and speaks the
-       same protocol, so this is the only way the website knows which one answered. */
+    /* Sent to the website on `subscribe`. The Blish module speaks the same protocol, so this
+       is how the website knows which one answered. */
     constexpr const char* MODULE_ID = "nexus";
 
     /* Nexus registry identifiers. Keep every one of these unique and stable: they are

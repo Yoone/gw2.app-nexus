@@ -1,7 +1,7 @@
 ///----------------------------------------------------------------------------------------------------
 /// Server.h: the localhost transport the website connects to.
 ///
-/// The module is the server. It listens on 38473 and speaks JSON over a WebSocket, falling back
+/// The module is the server. It listens on 38474 and speaks JSON over a WebSocket, falling back
 /// to HTTP polling. Wire format: ../gw2.app-blishhud/docs/protocol.md.
 ///
 /// Everything here runs on the server's own threads and reaches the render thread only through
