@@ -60,6 +60,9 @@ namespace
         int  MaxWaypointsPerCopy   = MAX_WAYPOINTS_PER_COPY;
 
         std::vector<OpenEntry> OpenLists;
+
+        /* Ids only, and only the collapsed ones. Kept in the order they were collapsed. */
+        std::vector<std::string> CollapsedCompleted;
     };
 
     Data                     s_data;
@@ -187,6 +190,27 @@ namespace
         }
     }
 
+    void ReadCollapsedCompleted(const json& aRoot)
+    {
+        s_data.CollapsedCompleted.clear();
+
+        auto it = aRoot.find("collapsedCompleted");
+        if (it == aRoot.end() || !it->is_array()) { return; }
+
+        for (const json& item : *it)
+        {
+            if (!item.is_string()) { continue; }
+
+            std::string id = item.get<std::string>();
+            if (id.empty()) { continue; }
+
+            const auto& ids = s_data.CollapsedCompleted;
+            if (std::find(ids.begin(), ids.end(), id) != ids.end()) { continue; }
+
+            s_data.CollapsedCompleted.push_back(std::move(id));
+        }
+    }
+
     /* Drop the least recently seen ids that are no longer open, until the array fits the cap.
        Ids the user has open right now are never dropped, however many there are. */
     void BoundOpenLists(std::vector<OpenEntry>& aEntries, size_t aOpenCount)
@@ -286,6 +310,7 @@ namespace Settings
                user would lose their windows for having been away. Expiry happens in SetOpenLists,
                where there is a live catalog to judge against. */
             ReadOpenLists(root);
+            ReadCollapsedCompleted(root);
         }
         catch (const std::exception& ex)
         {
@@ -334,6 +359,13 @@ namespace Settings
                 open.push_back(std::move(item));
             }
             root["openLists"] = std::move(open);
+
+            json collapsed = json::array();
+            for (const std::string& id : s_data.CollapsedCompleted)
+            {
+                collapsed.push_back(id);
+            }
+            root["collapsedCompleted"] = std::move(collapsed);
 
             /* Write beside the real file and rename over it, so a crash mid-write leaves the
                previous settings intact instead of a truncated file. */
@@ -489,6 +521,34 @@ namespace Settings
         RebuildOpenIds();
 
         SaveThrottled();
+    }
+
+    ///------------------------------------------------------------------------------------------------
+    /// Collapsed "completed" sections
+    ///
+    /// A window is rebuilt from scratch every time it opens, so without this the section would come
+    /// back expanded on every reopen. Ids of lists the website no longer offers are harmless: they
+    /// are never read, and the user gets their preference back if the list ever returns.
+    ///------------------------------------------------------------------------------------------------
+    bool IsCompletedCollapsed(const std::string& aListId)
+    {
+        const auto& ids = s_data.CollapsedCompleted;
+        return std::find(ids.begin(), ids.end(), aListId) != ids.end();
+    }
+
+    void SetCompletedCollapsed(const std::string& aListId, bool aCollapsed)
+    {
+        if (aListId.empty()) { return; }
+
+        auto& ids = s_data.CollapsedCompleted;
+        auto it = std::find(ids.begin(), ids.end(), aListId);
+
+        if (aCollapsed == (it != ids.end())) { return; }
+
+        if (aCollapsed) { ids.push_back(aListId); }
+        else            { ids.erase(it); }
+
+        Save();   /* a button click, not a drag: write it through */
     }
 
     ///------------------------------------------------------------------------------------------------

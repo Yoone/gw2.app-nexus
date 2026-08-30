@@ -44,4 +44,9 @@ namespace Settings
        one connection keeps its place; the set is bounded by age and size instead. */
     const std::vector<std::string>& OpenLists();
     void SetOpenLists(const std::vector<std::string>& aListIds);
+
+    /* Lists whose completed section the user collapsed ("Hide completed"). Only collapsed ids
+       are stored, so the default costs nothing and an unknown id reads as expanded. */
+    bool IsCompletedCollapsed(const std::string& aListId);
+    void SetCompletedCollapsed(const std::string& aListId, bool aCollapsed);
 }

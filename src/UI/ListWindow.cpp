@@ -87,23 +87,22 @@ namespace
     ///------------------------------------------------------------------------------------------------
     struct ListUI
     {
-        bool  CompletedCollapsed = false;
-        bool  CopyMode           = false;
+        bool  CopyMode        = false;
 
         /* The window auto-fits its content until the user resizes it. Once this latches, the
            height is theirs and we stop forcing one. */
-        bool  UserResized        = false;
-        float NeededHeight       = 0.0f;   /* measured last frame; content + chrome */
-        float RequestedHeight    = 0.0f;   /* what we asked ImGui for last frame */
-        float ActualHeight       = 0.0f;   /* what ImGui gave us last frame */
-        bool  Placed             = false;
-        bool  Fresh              = true;   /* first frame: adopt the persisted height */
+        bool  UserResized     = false;
+        float NeededHeight    = 0.0f;   /* measured last frame; content + chrome */
+        float RequestedHeight = 0.0f;   /* what we asked ImGui for last frame */
+        float ActualHeight    = 0.0f;   /* what ImGui gave us last frame */
+        bool  Placed          = false;
+        bool  Fresh           = true;   /* first frame: adopt the persisted height */
         /* The height to return to once a fit-to-content view (loading / failed / empty) ends.
            Read straight out of ImGui's persisted settings on the first frame, so a reload can
            recover it without ever having to display it. */
-        float SavedHeight        = 0.0f;
-        bool  WasFixedFit        = false;
-        bool  Resizing           = false;   /* user had the resize grip last frame */
+        float SavedHeight     = 0.0f;
+        bool  WasFixedFit     = false;
+        bool  Resizing        = false;   /* user had the resize grip last frame */
     };
 
     std::map<std::string, ListUI> s_state;
@@ -457,7 +456,7 @@ namespace
     ///------------------------------------------------------------------------------------------------
     /// The entries view, and the completed grouping the module applies
     ///------------------------------------------------------------------------------------------------
-    float RenderEntries(const Protocol::List& aList, ListUI& aState, const RowCtx& aCtx)
+    float RenderEntries(const Protocol::List& aList, const RowCtx& aCtx)
     {
         const float scale = aCtx.Scale;
         const ImVec2 start = ImGui::GetCursorScreenPos();
@@ -498,18 +497,21 @@ namespace
             {
                 const float gap = std::round(BASE_SECTION_GAP * scale);
 
+                /* Settings owns this, so the section stays collapsed across a reopen or a restart. */
+                const bool collapsed = Settings::IsCompletedCollapsed(aList.Id);
+
                 char label[64];
                 std::snprintf(label, sizeof(label), "%s completed (%d)",
-                              aState.CompletedCollapsed ? "Show" : "Hide", completed);
+                              collapsed ? "Show" : "Hide", completed);
 
                 pen += gap;
                 if (CenteredButton(label, aCtx.X0, aCtx.DividerW, pen, scale))
                 {
-                    aState.CompletedCollapsed = !aState.CompletedCollapsed;
+                    Settings::SetCompletedCollapsed(aList.Id, !collapsed);
                 }
                 pen += std::round(BASE_BUTTON_H * scale) + gap;
 
-                if (!aState.CompletedCollapsed)
+                if (!collapsed)
                 {
                     sectionHasRows = false;   /* the section starts without a leading divider */
                     for (size_t i = 0; i < aList.Entries.size(); ++i)
@@ -970,7 +972,7 @@ namespace
                     ctx.WinMax      = winMax;
                     ctx.Hover       = &aHover;
 
-                    bodyH = RenderEntries(aList, state, ctx);
+                    bodyH = RenderEntries(aList, ctx);
                 }
 
                 ImGui::EndChild();
