@@ -40,6 +40,11 @@ namespace
     constexpr int    OPEN_LIST_EXPIRY_DAYS  = 30;
     constexpr size_t MAX_OPEN_LIST_ENTRIES  = 64;
 
+    /* Mirrors the window's own limits, so a hand-edited file cannot ask for a window nobody can
+       see or grab. */
+    constexpr int    MIN_LIST_HEIGHT        = 120;
+    constexpr int    MAX_LIST_HEIGHT        = 1200;
+
     /* Never write the file more often than this while a slider is being dragged. */
     constexpr double SAVE_THROTTLE_SECONDS  = 0.5;
     /* A UI-scale drag re-subscribes at the new render width; wait for the drag to settle first. */
@@ -49,6 +54,12 @@ namespace
     {
         std::string Id;
         int         LastSeenDay = 0;   /* days since the epoch, stamped while the id is live */
+    };
+
+    struct HeightEntry
+    {
+        std::string Id;
+        int         Height = 0;   /* at 100% UI scale */
     };
 
     struct Data
@@ -63,6 +74,9 @@ namespace
 
         /* Ids only, and only the collapsed ones. Kept in the order they were collapsed. */
         std::vector<std::string> CollapsedCompleted;
+
+        /* Only lists the user actually resized. Everything else auto-fits. */
+        std::vector<HeightEntry> ListHeights;
     };
 
     Data                     s_data;
@@ -211,6 +225,25 @@ namespace
         }
     }
 
+    void ReadListHeights(const json& aRoot)
+    {
+        s_data.ListHeights.clear();
+
+        auto it = aRoot.find("listHeights");
+        if (it == aRoot.end() || !it->is_object()) { return; }
+
+        for (auto item = it->begin(); item != it->end(); ++item)
+        {
+            if (item.key().empty() || !item.value().is_number_integer()) { continue; }
+
+            const int height = item.value().get<int>();
+            if (height <= 0) { continue; }   /* "no preference", same as being absent */
+
+            s_data.ListHeights.push_back({ item.key(),
+                                           Clamp(height, MIN_LIST_HEIGHT, MAX_LIST_HEIGHT) });
+        }
+    }
+
     /* Drop the least recently seen ids that are no longer open, until the array fits the cap.
        Ids the user has open right now are never dropped, however many there are. */
     void BoundOpenLists(std::vector<OpenEntry>& aEntries, size_t aOpenCount)
@@ -311,6 +344,7 @@ namespace Settings
                where there is a live catalog to judge against. */
             ReadOpenLists(root);
             ReadCollapsedCompleted(root);
+            ReadListHeights(root);
         }
         catch (const std::exception& ex)
         {
@@ -366,6 +400,13 @@ namespace Settings
                 collapsed.push_back(id);
             }
             root["collapsedCompleted"] = std::move(collapsed);
+
+            json heights = json::object();
+            for (const HeightEntry& entry : s_data.ListHeights)
+            {
+                heights[entry.Id] = entry.Height;
+            }
+            root["listHeights"] = std::move(heights);
 
             /* Write beside the real file and rename over it, so a crash mid-write leaves the
                previous settings intact instead of a truncated file. */
@@ -549,6 +590,47 @@ namespace Settings
         else            { ids.erase(it); }
 
         Save();   /* a button click, not a drag: write it through */
+    }
+
+    ///------------------------------------------------------------------------------------------------
+    /// Remembered window heights
+    ///
+    /// A window's own height is this value already clamped to whatever the list currently shows,
+    /// so it cannot be read back off the window. It is stored at 100% scale.
+    ///------------------------------------------------------------------------------------------------
+    int ListHeight(const std::string& aListId)
+    {
+        for (const HeightEntry& entry : s_data.ListHeights)
+        {
+            if (entry.Id == aListId) { return entry.Height; }
+        }
+        return 0;
+    }
+
+    /* Called on every frame of a resize drag, so the writes below are throttled. */
+    void SetListHeight(const std::string& aListId, int aHeight)
+    {
+        if (aListId.empty()) { return; }
+
+        const int height = Clamp(aHeight, MIN_LIST_HEIGHT, MAX_LIST_HEIGHT);
+
+        for (HeightEntry& entry : s_data.ListHeights)
+        {
+            if (entry.Id != aListId) { continue; }
+
+            if (entry.Height == height)
+            {
+                FlushIfDirty();
+                return;
+            }
+
+            entry.Height = height;
+            SaveThrottled();
+            return;
+        }
+
+        s_data.ListHeights.push_back({ aListId, height });
+        SaveThrottled();
     }
 
     ///------------------------------------------------------------------------------------------------

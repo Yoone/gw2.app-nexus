@@ -49,4 +49,9 @@ namespace Settings
        are stored, so the default costs nothing and an unknown id reads as expanded. */
     bool IsCompletedCollapsed(const std::string& aListId);
     void SetCompletedCollapsed(const std::string& aListId, bool aCollapsed);
+
+    /* Height the user dragged a list window to, at 100% UI scale, or 0 if they never resized it.
+       The window treats it as a ceiling; see ListWindow.cpp for what that means. */
+    int  ListHeight(const std::string& aListId);
+    void SetListHeight(const std::string& aListId, int aHeight);
 }

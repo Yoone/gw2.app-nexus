@@ -64,7 +64,6 @@ namespace
     constexpr float BASE_WINDOW_DRAG_H   = 1200.0f; /* absolute ceiling for a deliberate drag */
 
     constexpr float BASE_COPY_SIDE_PAD   = 20.0f;
-    constexpr float BASE_COPY_RIGHT_PAD  = 25.0f;
     constexpr float BASE_COPY_CHUNK_H    = 30.0f;
     constexpr float BASE_COPY_CHUNK_GAP  = 4.0f;
 
@@ -82,6 +81,9 @@ namespace
     const ImVec4 TINT_NORMAL  = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
 
+    /* Compact covers loading, failed and empty, which all fit in the base height. */
+    enum class ViewKind { Entries, Copy, Compact };
+
     ///------------------------------------------------------------------------------------------------
     /// Per-list UI state, private to this file.
     ///------------------------------------------------------------------------------------------------
@@ -89,20 +91,20 @@ namespace
     {
         bool  CopyMode        = false;
 
-        /* The window auto-fits its content until the user resizes it. Once this latches, the
-           height is theirs and we stop forcing one. */
-        bool  UserResized     = false;
+        /* A ceiling for the entry list, not a size, and stored at 100% UI scale like Settings
+           keeps it. RememberHeight is the only thing that changes it. */
+        float PreferredHeight = 0.0f;
+
         float NeededHeight    = 0.0f;   /* measured last frame; content + chrome */
         float RequestedHeight = 0.0f;   /* what we asked ImGui for last frame */
-        float ActualHeight    = 0.0f;   /* what ImGui gave us last frame */
+        float ActualHeight    = 0.0f;   /* what ImGui gave us last frame, 0 if it was not drawn */
         bool  Placed          = false;
-        bool  Fresh           = true;   /* first frame: adopt the persisted height */
-        /* The height to return to once a fit-to-content view (loading / failed / empty) ends.
-           Read straight out of ImGui's persisted settings on the first frame, so a reload can
-           recover it without ever having to display it. */
-        float SavedHeight     = 0.0f;
-        bool  WasFixedFit     = false;
-        bool  Resizing        = false;   /* user had the resize grip last frame */
+        bool  Fresh           = true;   /* nothing measured yet */
+        bool  Resizing        = false;  /* user had the resize grip last frame */
+
+        /* Which layout produced NeededHeight. A height measured by one of the others says
+           nothing about this one. */
+        ViewKind LastView     = ViewKind::Compact;
     };
 
     std::map<std::string, ListUI> s_state;
@@ -213,6 +215,18 @@ namespace
             if (g->ActiveId == ImGui::GetWindowResizeID(aWindow, n)) { return true; }
         }
         return false;
+    }
+
+    /* The one place a height becomes the user's stated preference. Everything else only ever
+       reads it, which is what keeps a temporarily short list from rewriting it. */
+    void RememberHeight(ListUI& aState, const std::string& aListId, float aHeight, float aScale)
+    {
+        if (aHeight <= 0.0f || aScale <= 0.0f) { return; }
+
+        /* Kept unscaled so the window keeps its proportions when the UI scale slider moves under
+           it, rather than holding a pixel count meant for the old scale. */
+        aState.PreferredHeight = aHeight / aScale;
+        Settings::SetListHeight(aListId, (int)std::lround(aState.PreferredHeight));
     }
 
     bool CenteredButton(const char* aLabel, float aAreaX, float aAreaW, float aY, float aScale)
@@ -540,15 +554,15 @@ namespace
     ///------------------------------------------------------------------------------------------------
     float RenderCopyMode(const std::vector<std::string>& aCodes, float aInnerW, float aScale)
     {
-        const float sidePad = std::round(BASE_COPY_SIDE_PAD * aScale);
-        const float topPad  = std::round(BASE_COPY_SIDE_PAD * aScale);
+        /* One pad on all four sides, so the block reads as centred. */
+        const float pad     = std::round(BASE_COPY_SIDE_PAD * aScale);
         const float chunkH  = std::round(BASE_COPY_CHUNK_H * aScale);
         const float chunkGp = std::round(BASE_COPY_CHUNK_GAP * aScale);
-        const float width   = std::max(60.0f, aInnerW - sidePad - std::round(BASE_COPY_RIGHT_PAD * aScale));
+        const float width   = std::max(60.0f, aInnerW - pad * 2.0f);
 
         const ImVec2 start = ImGui::GetCursorScreenPos();
-        float        pen   = start.y + topPad;
-        const float  x     = start.x + sidePad;
+        float        pen   = start.y + pad;
+        const float  x     = start.x + pad;
 
         int maxPerCopy = Settings::MaxWaypointsPerCopy();
         if (maxPerCopy < 1)  { maxPerCopy = 1;  }
@@ -593,7 +607,7 @@ namespace
             pen += chunkH + chunkGp;
         }
 
-        pen += std::round(BASE_COPY_SIDE_PAD * aScale);
+        pen += pad;
 
         ImGui::SetCursorScreenPos(ImVec2(start.x, pen));
         ImGui::Dummy(ImVec2(0.0f, 0.0f));
@@ -629,8 +643,7 @@ namespace
             account = " (" + aList.AccountName + ")";
         }
 
-        const std::string reset   = Countdown::For(aList.Reset);
-        const std::string stableId = "###GW2APP_" + listId;
+        const std::string reset = Countdown::For(aList.Reset);
 
         /* --- geometry --------------------------------------------------------------------- */
         const float imageW      = RowImageWidth(scale);
@@ -675,82 +688,86 @@ namespace
                            || (load == Catalog::LoadState::Loading)
                            || aList.Entries.empty();
 
-        const float needed  = (state.NeededHeight > 0.0f) ? state.NeededHeight : baseH;
-        const float fitH    = std::max(minH, std::min(std::max(needed, baseH), maxH));
-        const float dragCap = std::min(std::round(BASE_WINDOW_DRAG_H * scale),
-                                       std::max(baseH, needed));
+        const ViewKind view = fixedFit
+                            ? ViewKind::Compact
+                            : state.CopyMode ? ViewKind::Copy : ViewKind::Entries;
 
-        /* Read the persisted height out of ImGui's settings instead of watching the window: a
-           reload's first frame is nearly always a Loading frame, which force-fits to the spinner,
-           so the restored height is never on screen to observe. ImHashStr resets its seed at
-           "###", so this is the id ImGui derives from the label whatever the display name is. */
+        /* Only the entry list scrolls, so only it has a reason to hold a height the user picked.
+           A spinner, a retry button or a column of copy buttons in a tall window is just a band
+           of empty background, so those size themselves to their content and lock. */
+        const bool fitToContent = view != ViewKind::Entries;
+
+        /* Last frame measured a different layout, so its height tells us nothing about this one. */
+        const bool measured = !state.Fresh && state.LastView == view;
+
+        const float dragMax = std::round(BASE_WINDOW_DRAG_H * scale);
+        const float needed  = (measured && state.NeededHeight > 0.0f) ? state.NeededHeight : baseH;
+        const float fitH    = std::max(minH, std::min(std::max(needed, baseH), maxH));
+
+        /* What the list has to show, floored so a nearly empty one still gets a usable window and
+           capped at the same ceiling a deliberate drag has. */
+        const float contentH = std::max(minH, std::min(dragMax, std::max(baseH, needed)));
+
         if (state.Fresh)
         {
-            if (ImGuiWindowSettings* ws = ImGui::FindWindowSettings(ImHashStr(stableId.c_str())))
-            {
-                if (ws->Size.y > 0)
-                {
-                    state.SavedHeight = (float)ws->Size.y;
-                    state.UserResized = true;   /* a persisted height IS a stated preference */
-                }
-            }
+            state.PreferredHeight = (float)Settings::ListHeight(listId);
         }
 
-        /* A height we did not ask for means the user dragged it. Runs before the branching so a
-           fit-to-content frame cannot skip it. */
-        if (!state.UserResized && !state.Fresh && state.ActualHeight > 0.0f
-            && std::fabs(state.ActualHeight - state.RequestedHeight) > 2.0f)
+        /* A height we did not ask for, which is how a drag reaches us: the branch that runs while
+           the grip is held deliberately asks for nothing.
+
+           The mouse has to have actually moved, though. Holding the grip switches to a max
+           constraint of contentH, so a list that shrinks under a still mouse gets clamped by us,
+           and without this that clamp would read as a drag and be saved as the preference. */
+        if (state.ActualHeight > 0.0f
+            && std::fabs(state.ActualHeight - state.RequestedHeight) > 2.0f
+            && (!state.Resizing || ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)))
         {
-            state.UserResized = true;
-            state.SavedHeight = state.ActualHeight;
+            RememberHeight(state, listId, state.ActualHeight, scale);
         }
 
-        /* Loading, failed and empty render compact whatever height the list normally has: a
-           spinner and one line of text in a 600 px window looks broken. The height comes back
-           with the content, in the branch below. */
-        if (fixedFit)
+        if (fitToContent && (measured || view == ViewKind::Compact))
         {
+            /* Pinned to the content, which leaves the reserved scrollbar a full grab and nothing
+               to move. The remembered height is untouched and comes back with the entry list. */
             ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, fitH), ImVec2(windowW, fitH));
             ImGui::SetNextWindowSize(ImVec2(windowW, fitH), ImGuiCond_Always);
             state.RequestedHeight = fitH;
         }
-        else if (state.WasFixedFit && state.UserResized && state.SavedHeight > 0.0f)
+        else if (fitToContent)
         {
-            /* Content just arrived: restore the height the user had before the compact view. */
-            const float restore = std::max(minH, std::min(state.SavedHeight,
-                                                          std::round(BASE_WINDOW_DRAG_H * scale)));
-            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH),
-                                                ImVec2(windowW, std::round(BASE_WINDOW_DRAG_H * scale)));
-            ImGui::SetNextWindowSize(ImVec2(windowW, restore), ImGuiCond_Always);
-            state.RequestedHeight = restore;
+            /* Copy mode, first frame. Its height is only known once the buttons have been laid
+               out, and the compact height is not a useful guess, so hold what we have for one
+               frame rather than dropping to it and climbing straight back. */
+            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH), ImVec2(windowW, dragMax));
         }
-        else if (state.Fresh)
+        else if (state.Resizing)
         {
-            /* First sighting with content already there. FirstUseEver lets a persisted size win
-               over the fit. */
-            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH),
-                                                ImVec2(windowW, std::round(BASE_WINDOW_DRAG_H * scale)));
-            ImGui::SetNextWindowSize(ImVec2(windowW, fitH), ImGuiCond_FirstUseEver);
-            state.RequestedHeight = fitH;
+            /* Hands off while the grip is held. All we do is stop the drag going past what the
+               list actually has to show.
+
+               Deliberately leaving RequestedHeight alone: it keeps the height from before the
+               drag, so every frame the window moves reads as a height we did not ask for, which
+               is what feeds the preference above. */
+            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH), ImVec2(windowW, contentH));
         }
         else
         {
-            /* The content-height ceiling stops the user dragging a window taller than it has rows
-               for, so it applies only while they are dragging.
+            /* Hiding completed entries or ticking rows off shortens the window instead of
+               leaving a band of empty background, and it grows back on its own when the content
+               returns. Measuring short is normal along the way: a row whose image has not
+               uploaded yet takes up no space, and the frame arriving from another layout has no
+               measurement of this one at all, so it starts from the base height. Both grow into
+               place, because the clamp only ever reaches the window and never the preference. */
+            const float preferred = std::round(state.PreferredHeight * scale);
 
-               Applying it every frame was destructive. Just after a load some row images have not
-               uploaded yet, so the measured content is briefly short, and the ceiling clamped the
-               window down to that transient height, which ImGui then persisted to imgui.ini. */
-            const float ceiling = state.Resizing
-                ? std::max(minH, dragCap)
-                : std::round(BASE_WINDOW_DRAG_H * scale);
+            const float target = preferred > 0.0f
+                ? std::max(minH, std::min(preferred, contentH))
+                : fitH;
 
-            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH), ImVec2(windowW, ceiling));
-            if (!state.UserResized)
-            {
-                ImGui::SetNextWindowSize(ImVec2(windowW, fitH), ImGuiCond_Always);
-                state.RequestedHeight = fitH;
-            }
+            ImGui::SetNextWindowSizeConstraints(ImVec2(windowW, minH), ImVec2(windowW, dragMax));
+            ImGui::SetNextWindowSize(ImVec2(windowW, target), ImGuiCond_Always);
+            state.RequestedHeight = target;
         }
 
         if (!state.Placed)
@@ -782,7 +799,7 @@ namespace
         ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar
                                | ImGuiWindowFlags_NoScrollWithMouse
                                | ImGuiWindowFlags_NoNavInputs;   /* never claim the keyboard */
-        if (fixedFit) { flags |= ImGuiWindowFlags_NoResize; }
+        if (fitToContent) { flags |= ImGuiWindowFlags_NoResize; }
 
 
         /* Escape must stay with the game's menu, so do not register these windows for
@@ -837,21 +854,9 @@ namespace
                 window->DrawList->PopClipRect();
             }
 
-            state.Resizing = !fixedFit && IsWindowResizeActive(window);
-            if (state.Resizing)
-            {
-                /* The user has expressed a preference; stop force-fitting. ImGui keeps the size
-                   from here on and the constraint above re-clamps it to real content. */
-                state.UserResized = true;
-            }
+            state.Resizing = !fitToContent && IsWindowResizeActive(window);
 
-            /* Keep the restore target current, but only from frames showing real content. A
-               fit-to-content frame would otherwise overwrite it with the spinner's height. */
-            if (!fixedFit && state.UserResized && state.ActualHeight > 0.0f)
-            {
-                state.SavedHeight = state.ActualHeight;
-            }
-            state.WasFixedFit = fixedFit;
+            state.LastView = view;
 
             const ImVec2 winMin = ImGui::GetWindowPos();
             const ImVec2 winMax = ImVec2(winMin.x + ImGui::GetWindowSize().x,
@@ -866,7 +871,7 @@ namespace
                worth caching and it only runs in copy mode. */
             std::vector<std::string> codes;
             bool footer = false;
-            if (!fixedFit && Settings::ShowCopyWaypointsButton())
+            if (view != ViewKind::Compact && Settings::ShowCopyWaypointsButton())
             {
                 codes  = Waypoints::Gather(aList);
                 footer = !codes.empty();
@@ -946,12 +951,15 @@ namespace
                 float availH = ImGui::GetContentRegionAvail().y - footerH;
                 if (availH < std::round(40.0f * scale)) { availH = std::round(40.0f * scale); }
 
-                /* Rows are laid out flush inside the scrolling child; the scrollbar is always
-                   reserved so a row's x never shifts when it appears. */
+                /* Rows are laid out flush inside the scrolling child, and keep the scrollbar
+                   reserved so a row's x never shifts when it appears. Copy mode is pinned to its
+                   content, so a reserved bar there would never move and would just push the
+                   buttons off centre. It still gets a real one if it overflows the fit. */
+                ImGuiWindowFlags bodyFlags = ImGuiWindowFlags_NoNavInputs;
+                if (!state.CopyMode) { bodyFlags |= ImGuiWindowFlags_AlwaysVerticalScrollbar; }
+
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-                ImGui::BeginChild("##body", ImVec2(0.0f, availH), false,
-                                  ImGuiWindowFlags_AlwaysVerticalScrollbar
-                                  | ImGuiWindowFlags_NoNavInputs);
+                ImGui::BeginChild("##body", ImVec2(0.0f, availH), false, bodyFlags);
 
                 const float innerW = ImGui::GetContentRegionAvail().x;
 
@@ -995,7 +1003,17 @@ namespace
                 bodyH += footerH;
             }
 
-            state.NeededHeight = chromeH + bodyH;
+            /* Rounded up because ImGui floors the size it grants. A fit landing a fraction of a
+               pixel short would overflow the content and put a live scrollbar in a view that has
+               nothing to scroll. */
+            state.NeededHeight = std::ceil(chromeH + bodyH);
+        }
+        else
+        {
+            /* Collapsed to its title bar, or clipped away. Nothing was measured, so the drag
+               check has to skip this frame rather than compare against a stale height. */
+            state.ActualHeight = 0.0f;
+            state.Resizing     = false;
         }
 
         ImGui::End();
