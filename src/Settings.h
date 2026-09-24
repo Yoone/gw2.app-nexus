@@ -18,7 +18,8 @@ namespace Settings
     void Save();
 
     /* Once per frame: flushes a throttled edit once its window has elapsed, so a crash can
-       only lose the last moment of changes rather than everything since the panel closed. */
+       only lose the last moment of changes rather than everything since the panel closed.
+       Also re-subscribes when the render width moves, from the slider or a DPI change. */
     void Tick();
 
     /* Rendered inside Nexus' addon options panel (RT_OptionsRender). */
@@ -38,6 +39,8 @@ namespace Settings
     /* Derived: the device-pixel width row images are drawn at. Base 400 * scale.
        Sent to the website as `render_width` so images arrive 1:1. */
     int   RenderWidth();
+
+    /* The slider times the monitor's DPI factor, as Nexus applies it to text. */
     float UiScale();
 
     /* Lists open at shutdown, restored on the first `state` of a connection. A list missing from

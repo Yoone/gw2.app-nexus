@@ -85,10 +85,10 @@ namespace
     bool   s_dirty          = false;
     double s_lastSaveTime   = 0.0;
 
-    /* UI-scale debounce state. Only touched from RenderOptions. */
+    /* UI-scale debounce state. The slider sets it, Tick commits it. */
     bool   s_scalePending   = false;
     double s_scaleTouchTime = 0.0;
-    int    s_scaleCommitted = DEF_UI_SCALE_PCT;
+    int    s_widthCommitted = 0;       /* render width the website last heard about */
 
     int Clamp(int aValue, int aMin, int aMax)
     {
@@ -108,6 +108,16 @@ namespace
     {
         /* ImGui's clock is the only one we need here, and every caller is on the render thread. */
         return ImGui::GetCurrentContext() != nullptr ? ImGui::GetTime() : 0.0;
+    }
+
+    /* Nexus sets FontGlobalScale to the monitor's DPI factor (1 when its DPI option is off), so
+       our text already grows with DPI and the rest of the list has to follow. NexusLink->Scaling
+       would also pull in the game's interface size, which our text does not follow. */
+    float DpiScale()
+    {
+        if (ImGui::GetCurrentContext() == nullptr) { return 1.0f; }
+        const float s = ImGui::GetIO().FontGlobalScale;
+        return (s >= 1.0f && s <= 3.0f) ? s : 1.0f;
     }
 
     const std::string& SettingsPath()
@@ -357,12 +367,26 @@ namespace Settings
             Addon::Log(LOGL_WARNING, "Failed to read settings.json; using defaults.");
         }
 
-        s_scaleCommitted = s_data.UiScalePct;
+        s_widthCommitted = RenderWidth();
         RebuildOpenIds();
     }
 
     void Tick()
     {
+        if (s_scalePending && Now() - s_scaleTouchTime >= SCALE_COMMIT_SECONDS)
+        {
+            s_scalePending = false;
+            Save();
+        }
+
+        /* Polled because Nexus raises no event when the DPI changes, for example when the game
+           moves to another monitor. */
+        if (!s_scalePending && RenderWidth() != s_widthCommitted)
+        {
+            s_widthCommitted = RenderWidth();
+            Catalog::ResendSubscribe();
+        }
+
         FlushIfDirty();
     }
 
@@ -470,12 +494,12 @@ namespace Settings
 
     float UiScale()
     {
-        return (float)s_data.UiScalePct / 100.0f;
+        return (float)s_data.UiScalePct / 100.0f * DpiScale();
     }
 
     int RenderWidth()
     {
-        return (int)std::lround((double)BASE_DISPLAY_WIDTH * (double)s_data.UiScalePct / 100.0);
+        return (int)std::lround((float)BASE_DISPLAY_WIDTH * UiScale());
     }
 
     ///------------------------------------------------------------------------------------------------
@@ -698,27 +722,15 @@ namespace Settings
             s_scaleTouchTime  = Now();
         }
 
-        const bool released = ImGui::IsItemDeactivatedAfterEdit();
+        /* Letting go of the slider is already a settled value, like a click on reset. */
+        if (ImGui::IsItemDeactivatedAfterEdit()) { s_scaleTouchTime = 0.0; }
 
         ImGui::SameLine();
         if (ImGui::Button("Reset to 100%##gw2app"))
         {
             s_data.UiScalePct = DEF_UI_SCALE_PCT;
             s_scalePending    = true;
-            s_scaleTouchTime  = 0.0;   /* a click is already a settled value */
-        }
-
-        if (s_scalePending && (released || Now() - s_scaleTouchTime >= SCALE_COMMIT_SECONDS))
-        {
-            s_scalePending = false;
-
-            if (s_data.UiScalePct != s_scaleCommitted)
-            {
-                s_scaleCommitted = s_data.UiScalePct;
-                Catalog::ResendSubscribe();
-            }
-
-            Save();
+            s_scaleTouchTime  = 0.0;
         }
 
         ImGui::Unindent(indent);

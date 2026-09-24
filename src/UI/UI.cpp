@@ -188,7 +188,7 @@ namespace UI
         ImGui::PushStyleColor(ImGuiCol_ResizeGripActive,  IM_COL32(255, 255, 255, 86));    colors++;
 
         /* Every metric comes off the scale setting, so they all move together with it. */
-        const float scale = std::max(0.5f, std::min(2.0f, Settings::UiScale()));
+        const float scale = std::max(0.5f, std::min(4.0f, Settings::UiScale()));
         const float pad   = std::round(8.0f * scale);
 
         int vars = 0;
